@@ -3,6 +3,7 @@ import copy
 import pathlib
 
 import numpy as np
+import math
 import cosa.run_config
 
 import cosa.utils as utils
@@ -245,7 +246,7 @@ class Mapspace(object):
         perm_config = self.get_default_perm()
 
         # set up permutation space 
-        self.perm_space = np.math.factorial(self.prob.prob_levels) * np.ones(
+        self.perm_space = math.factorial(self.prob.prob_levels) * np.ones(
             (arch.mem_levels, len(self.org_idx_dict.items())))
         self.perm_space_tup = tuple(self.perm_space.flatten())
 

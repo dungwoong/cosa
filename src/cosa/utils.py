@@ -149,7 +149,8 @@ def run_timeloop(arch, prob, mapp, cwd=os.getcwd(), stdout=None, stderr=None):
                                   cwd=cwd, stdout=stdout, stderr=stderr)
         logger.info('run_timeloop> timeloop-model {} {} {}'.format(arch, prob, mapp))
         return True
-    except:
+    except Exception as e:
+        logger.info(e)
         return False
 
 

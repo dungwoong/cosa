@@ -74,13 +74,14 @@ def run_config(mapspace, spatial_config, perm_config, factor_config, status_dict
     status_dict_file = output_dir / "{}.dict.json".format(prefix)
 
     # logger.debug("status_dict_before: {}".format(status_dict[status_dict_key]))
+    logger.info(f'XML FILE: {xml_file}, exists={xml_file.exists()}, map_path_exists={map_path.exists()}')
     # generate map 
     if run_gen_map:
         # print('run_timeloop> timeloop-model {} {} {}'.format(mapspace.arch.path, mapspace.prob.path, map_path))
         if map_path.exists() and not xml_file.exists():
             status_dict[status_dict_key]['run_status'][0] = 0
         elif not xml_file.exists():
-            # logger.info("Run Generate Mapping")
+            logger.info("Run Generate Mapping")
             utils.store_yaml(map_path, mapping)
             success = utils.run_timeloop(mapspace.arch.path, mapspace.prob.path, map_path, cwd=output_dir)
 
@@ -94,7 +95,7 @@ def run_config(mapspace, spatial_config, perm_config, factor_config, status_dict
                             0])
                 return status_dict[status_dict_key]
             else:
-                # logger.info("\tValid Mapping Detected!")
+                logger.info("\tValid Mapping Detected!")
                 assert (xml_file.exists())
                 status_dict[status_dict_key]['run_status'][0] = 1
         else:
@@ -117,7 +118,8 @@ def run_config(mapspace, spatial_config, perm_config, factor_config, status_dict
                 for mem_util in buf:
                     utilized_capacity += mem_util
                 status_dict[status_dict_key]['utilized_capacity'].append(utilized_capacity)
-    logger.info("Status: {}".format(status_dict[status_dict_key]))
+    # logger.info("Status: {}".format(status_dict[status_dict_key]))
+    logger.info(f'Storing to {status_dict_file}')
     utils.store_json(status_dict_file, status_dict, indent=4)
     return status_dict[status_dict_key]
 
