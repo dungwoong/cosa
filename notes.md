@@ -1,3 +1,9 @@
+# setup
+2025/02/19 Current progress: seems like timeloop is working now. Getting cosa.py:599 error invalid schedule. That could be any issue from run_config. Need to probably print the error. 
+- poetry install, poetry run
+- [cannot open file](https://stackoverflow.com/questions/480764/linux-error-while-loading-shared-libraries-cannot-open-shared-object-file-no-s)
+- [some more of that](https://forum.cardano.org/t/error-cardano-node-error-while-loading-shared-libraries-libsodium-so-23-cannot-open-shared-object-file-no-such-file-or-directory/39820/2)
+
 # run
 
 cd src
