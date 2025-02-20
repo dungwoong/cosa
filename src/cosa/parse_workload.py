@@ -125,8 +125,14 @@ def get_subnest_info(xml_file):
     subnest_info = {}
     subnest_info['energy'] = summary_info['energy']
     subnest_info['cycle'] = summary_info['cycle']
-    tree = ET.parse(xml_file);
-    root = tree.getroot()
+
+    # ADDED: strip newline
+    with open(xml_file, 'r') as file:
+        xml_content = file.read().strip() + '</boost_serialization>' # seems like this tag doesn't get closed...
+
+    root = ET.fromstring(xml_content)
+    # tree = ET.parse(xml_file)
+    # root = tree.getroot()
 
     timeloop_dict = xml2dict(root)
     # print(timeloop_dict)

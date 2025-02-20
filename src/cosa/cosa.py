@@ -3,6 +3,7 @@ import argparse
 import os
 import pathlib
 import time
+import traceback
 
 import numpy as np
 import cosa.run_config as run_config
@@ -595,7 +596,8 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
                                         run_gen_map=True, run_gen_tc=True, run_sim_test=True, output_path=output_path,
                                         spatial_configs=spatial_configs, valid_check=False, outer_loopcount_limit=100)
         logger.info(f'status_dict: {status_dict}')
-    except:
+    except Exception as e:
+        logger.error(traceback.format_exc())
         logger.error('Error: invalid schedule.')
 
     return status_dict
