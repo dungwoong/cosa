@@ -1,3 +1,10 @@
+# TODO
+- Need to also save the tts(time to solve) in the JSON
+- Need to figure out how to test different mappings and stuff.
+- Probably figure out how timeloop outputs work [timeloop tutorial](https://www.youtube.com/watch?v=dchmgjmt5Yk) [slides](https://accelergy.mit.edu/isca2020/2020_05_29_timeloop_accelergy_tutorial_part1.pdf)
+- Need to maybe confirm with Maryam on what kinds of experiments I will then run?
+- Then, I can run and plot
+
 # setup
 2025/02/19 Current progress: seems like timeloop is working now. Getting cosa.py:599 error invalid schedule. That could be any issue from run_config. Need to probably print the error. 
 - poetry install, poetry run

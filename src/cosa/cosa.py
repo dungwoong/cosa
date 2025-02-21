@@ -4,6 +4,7 @@ import os
 import pathlib
 import time
 import traceback
+import copy
 
 import numpy as np
 import cosa.run_config as run_config
@@ -568,6 +569,10 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
     factor_config, spatial_config, outer_perm_config, run_time = cosa(prob, arch, _A, B, part_ratios, global_buf_idx=4,
                                                                       Z=Z)
 
+    # Re-map all mem levels with spatial resources into new indices starting at arch.mem_levels
+    # eg. levels 1, 3, 4 have spatial resources: 1 > 6, 3 > 7, 4 > 8
+    # so we have eg. index 1 is the mem level(Temporal), then idx 6 is mem level(spatial)
+    factor_config_backup = copy.deepcopy(factor_config)
     update_factor_config = factor_config
     spatial_to_factor_map = {}
     idx = arch.mem_levels
@@ -577,6 +582,7 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
             idx += 1
     logger.info(f'spatial_to_factor_map: {spatial_to_factor_map}')
 
+    # Updated schedule using above mapping
     for j, f_j in enumerate(prob.prob_factors):
         for n, f_jn in enumerate(f_j):
             # if is mapped to spatial, look up the combined index
@@ -588,7 +594,23 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
     perm_config = mapspace.get_default_perm()
     perm_config[4] = outer_perm_config
 
-    status_dict = {}
+    # status_dict = {}
+    # ADDED
+    # note: 
+    # pe_energy is pJ(1e-12 Joules)
+    # energy is
+    status_dict = {
+        'mem_instances': arch.mem_instances,
+        'mem_entries': arch.mem_entries,
+        'problem': prob.prob,
+        'prime_factors': prob.prob_factors, # Prime factors
+        'factor_config': factor_config_backup, # for each factor, what layer
+        'spatial_config': spatial_config, # for each factor, temporal(0) or spatial(1)
+        # don't need updated factor config
+        'prob_path': str(prob_path),
+        'arch_path': str(arch_path),
+        'mip_time': run_time,
+    }
     try:
         spatial_configs = []
         logger.info('\n\n\nRunning config\n\n\n')
