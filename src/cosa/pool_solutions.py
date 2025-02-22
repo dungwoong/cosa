@@ -1,3 +1,9 @@
+# For now, try a backtracking search to find possible configs, not sure how I could manually come up with configs
+# Maybe we could just run the ones with relatively low temporal cycles to graph
+# probably run the exact same stuff as CoSA, but don't use the cosa MIP solver, just add your own configs
+# So copy stuff before CoSA, copy stuff after CoSA, but maybe have some sort of search alg in the middle. I can convert the constraints over from the mip model
+# actually, maybe use SolutionPool from gurobi here: https://docs.gurobi.com/projects/optimizer/en/current/features/solutionpool.html
+
 #!/usr/bin/env python3 
 import argparse
 import os
@@ -115,6 +121,11 @@ def mip_solver(f, strides, arch, part_ratios, global_buf_idx, A, Z, compute_fact
     num_mems = len(Z[0])
 
     m = Model("mip")
+
+    # Look for multiple feasible solutions
+    m.setParam("PoolSolutions", 30)
+    m.setParam("PoolSearchMode", 2)
+
     cost = []
     constraints = []
 
@@ -569,73 +580,78 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
     ]
     factor_config, spatial_config, outer_perm_config, run_time = cosa(prob, arch, _A, B, part_ratios, global_buf_idx=4,
                                                                       Z=Z)
+    # GOAL: save all feasible solutions we found in the MIP solver
+    # SolCount, how many solutions were found
+    # SolutionNumber starts indexing at 0. So we want to retrieve the values and yeah
+    # probably separate out the MIP code generates the outputs from the model solution, and rerun it for every suboptimal solution and save to a json
 
-    # Re-map all mem levels with spatial resources into new indices starting at arch.mem_levels
-    # eg. levels 1, 3, 4 have spatial resources: 1 > 6, 3 > 7, 4 > 8
-    # so we have eg. index 1 is the mem level(Temporal), then idx 6 is mem level(spatial)
-    factor_config_backup = copy.deepcopy(factor_config)
-    update_factor_config = factor_config
-    spatial_to_factor_map = {}
-    idx = arch.mem_levels
-    for i, val in enumerate(arch.S):
-        if val > 1:
-            spatial_to_factor_map[i] = idx
-            idx += 1
-    logger.info(f'spatial_to_factor_map: {spatial_to_factor_map}')
 
-    # Updated schedule using above mapping
-    for j, f_j in enumerate(prob.prob_factors):
-        for n, f_jn in enumerate(f_j):
-            # if is mapped to spatial, look up the combined index
-            if spatial_config[j][n] == 1:
-                idx = factor_config[j][n]
-                update_factor_config[j][n] = spatial_to_factor_map[idx]
+#     # Re-map all mem levels with spatial resources into new indices starting at arch.mem_levels
+#     # eg. levels 1, 3, 4 have spatial resources: 1 > 6, 3 > 7, 4 > 8
+#     # so we have eg. index 1 is the mem level(Temporal), then idx 6 is mem level(spatial)
+#     factor_config_backup = copy.deepcopy(factor_config)
+#     update_factor_config = factor_config
+#     spatial_to_factor_map = {}
+#     idx = arch.mem_levels
+#     for i, val in enumerate(arch.S):
+#         if val > 1:
+#             spatial_to_factor_map[i] = idx
+#             idx += 1
+#     logger.info(f'spatial_to_factor_map: {spatial_to_factor_map}')
 
-    logger.info(f'update_factor_config: {update_factor_config}')
-    perm_config = mapspace.get_default_perm()
-    perm_config[4] = outer_perm_config
+#     # Updated schedule using above mapping
+#     for j, f_j in enumerate(prob.prob_factors):
+#         for n, f_jn in enumerate(f_j):
+#             # if is mapped to spatial, look up the combined index
+#             if spatial_config[j][n] == 1:
+#                 idx = factor_config[j][n]
+#                 update_factor_config[j][n] = spatial_to_factor_map[idx]
 
-    # status_dict = {}
-    # ADDED
-    # note: 
-    # pe_energy is pJ(1e-12 Joules)
-    # energy is
-    status_dict = {
-        'mem_instances': arch.mem_instances,
-        'mem_entries': arch.mem_entries,
-        'problem': prob.prob,
-        'prime_factors': prob.prob_factors, # Prime factors
-        'factor_config': factor_config_backup, # for each factor, what layer
-        'spatial_config': spatial_config, # for each factor, temporal(0) or spatial(1)
-        'outer_perm_config': outer_perm_config,
-        # don't need updated factor config
-        'prob_path': str(prob_path),
-        'arch_path': str(arch_path),
-        'mip_time': run_time,
-    }
-    try:
-        spatial_configs = []
-        logger.info('\n\n\nRunning config\n\n\n')
-        results = run_config.run_config(mapspace, None, perm_config, update_factor_config, status_dict,
-                                        run_gen_map=True, run_gen_tc=True, run_sim_test=True, output_path=output_path,
-                                        spatial_configs=spatial_configs, valid_check=False, outer_loopcount_limit=100)
-        logger.info(f'status_dict: {status_dict}')
-    except Exception as e:
-        logger.error(traceback.format_exc())
-        logger.error('Error: invalid schedule.')
+#     logger.info(f'update_factor_config: {update_factor_config}')
+#     perm_config = mapspace.get_default_perm()
+#     perm_config[4] = outer_perm_config
 
-    return status_dict
+#     # status_dict = {}
+#     # ADDED
+#     # note: 
+#     # pe_energy is pJ(1e-12 Joules)
+#     # energy is
+#     status_dict = {
+#         'mem_instances': arch.mem_instances,
+#         'mem_entries': arch.mem_entries,
+#         'problem': prob.prob,
+#         'prime_factors': prob.prob_factors, # Prime factors
+#         'factor_config': factor_config_backup, # for each factor, what layer
+#         'spatial_config': spatial_config, # for each factor, temporal(0) or spatial(1)
+#         'outer_perm_config': outer_perm_config,
+#         # don't need updated factor config
+#         'prob_path': str(prob_path),
+#         'arch_path': str(arch_path),
+#         'mip_time': run_time,
+#     }
+#     try:
+#         spatial_configs = []
+#         logger.info('\n\n\nRunning config\n\n\n')
+#         results = run_config.run_config(mapspace, None, perm_config, update_factor_config, status_dict,
+#                                         run_gen_map=True, run_gen_tc=True, run_sim_test=True, output_path=output_path,
+#                                         spatial_configs=spatial_configs, valid_check=False, outer_loopcount_limit=100)
+#         logger.info(f'status_dict: {status_dict}')
+#     except Exception as e:
+#         logger.error(traceback.format_exc())
+#         logger.error('Error: invalid schedule.')
 
-def run_cosa():
-    parser = construct_argparser()
-    args = parser.parse_args()
+#     return status_dict
 
-    prob_path = pathlib.Path(args.prob_path).resolve()
-    arch_path = pathlib.Path(args.arch_path).resolve()
-    mapspace_path = pathlib.Path(args.mapspace_path).resolve()
-    output_path = args.output_dir
+# def run_cosa():
+#     parser = construct_argparser()
+#     args = parser.parse_args()
 
-    run_timeloop(prob_path, arch_path, mapspace_path, output_path)
+#     prob_path = pathlib.Path(args.prob_path).resolve()
+#     arch_path = pathlib.Path(args.arch_path).resolve()
+#     mapspace_path = pathlib.Path(args.mapspace_path).resolve()
+#     output_path = args.output_dir
+
+#     run_timeloop(prob_path, arch_path, mapspace_path, output_path)
 
 
 if __name__ == "__main__":
