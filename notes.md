@@ -1,7 +1,18 @@
 # TODO
+- utils has run_timeloop_mapper_hybrid. This is the SOTA they mentioned in the work. I can see how to use that later.
 
 # Skipped
 - Probably figure out how timeloop outputs work [timeloop tutorial](https://www.youtube.com/watch?v=dchmgjmt5Yk) [slides](https://accelergy.mit.edu/isca2020/2020_05_29_timeloop_accelergy_tutorial_part1.pdf)
+
+# Rough notes on what I did
+- Got CoSA setup
+- Created `test.sh`, can run all CoSA commands
+- Created `data_cleaning.ipynb` to analyze results of runs between all the workloads/architectures, for the purpose of analyzing MIP overhead, etc.
+- Created `pool_solutions.py` to generate suboptimal solutions for one workload/arch, for graphing. THIS ISN'T WORKING
+
+# Notes
+- Seems like there's a lot of feasible solutions with the same objective value being found by the QP solver. Some of these have the same factor/spatial config, etc.
+- Maybe we can conclude that this symmetry or whatever can cause a bottleneck in the solver, and then we can move onto trying to get timeloop_hybrid mappings instead of cosa mappings
 
 
 # Experiments
@@ -29,3 +40,4 @@ python3.10 -m cosa.cosa
 - sample command: `wangke61@comps0:~/cosa/src$ python3.10 -m cosa.cosa -ap cosa/configs/arch/simba.yaml -pp cosa/configs/workloads/alexnet_graph/_outputs_210.yaml -mp cosa/configs/mapspace/mapspace.yaml`
 - `poetry run python -m cosa.cosa -ap cosa/configs/arch/simba.yaml -pp cosa/configs/workloads/alexnet_graph/_outputs_210.yaml -mp cosa/configs/mapspace/mapspace.yaml`
 - delete output_dir, or else it'll cache stuff. Seems like timeloop isn't working rn
+- `poetry run python -m cosa.pool_solutions -ap cosa/configs/arch/simba.yaml -pp cosa/configs/workloads/resnet50_graph/_outputs_input.83.yaml -mp cosa/configs/mapspace/mapspace.yaml -o output_dir/test`

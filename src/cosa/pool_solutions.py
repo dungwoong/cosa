@@ -11,6 +11,7 @@ import pathlib
 import time
 import traceback
 import copy
+import json
 
 import numpy as np
 import cosa.run_config as run_config
@@ -21,6 +22,8 @@ from gurobipy import *
 
 import cosa.utils as utils
 logger = utils.logger
+
+OBJECTIVE_INCREASE_THRESHOLD = 1e-6
 
 
 try:
@@ -104,11 +107,10 @@ def cosa(prob, arch, A, B, part_ratios, global_buf_idx, Z=None):
                 Z_var.append(rank_arr)
             Z.append(Z_var)
 
-    factor_config, spatial_config, outer_perm_config, run_time = mip_solver(prime_factors, strides, arch, part_ratios,
-                                                                            global_buf_idx=4, A=_A, Z=Z,
-                                                                            compute_factor=10, util_factor=-0.1,
-                                                                            traffic_factor=1)
-    return factor_config, spatial_config, outer_perm_config, run_time
+    yield from mip_solver(prime_factors, strides, arch, part_ratios, 
+                          global_buf_idx=4, A=_A, Z=Z, 
+                          compute_factor=10, util_factor=-0.1,
+                          traffic_factor=1)
 
 
 def mip_solver(f, strides, arch, part_ratios, global_buf_idx, A, Z, compute_factor=10, util_factor=-1,
@@ -121,10 +123,6 @@ def mip_solver(f, strides, arch, part_ratios, global_buf_idx, A, Z, compute_fact
     num_mems = len(Z[0])
 
     m = Model("mip")
-
-    # Look for multiple feasible solutions
-    m.setParam("PoolSolutions", 30)
-    m.setParam("PoolSearchMode", 2)
 
     cost = []
     constraints = []
@@ -412,6 +410,10 @@ def mip_solver(f, strides, arch, part_ratios, global_buf_idx, A, Z, compute_fact
 
     m.ModelSense = GRB.MINIMIZE
     m.setObjective(cosa_obj, GRB.MINIMIZE)
+    
+    # Look for multiple feasible solutions
+    m.setParam(GRB.Param.PoolSearchMode, 2)
+    m.setParam(GRB.Param.PoolSolutions, 500)
 
     # optimize for the objective function
     milp_time = 0
@@ -423,132 +425,151 @@ def mip_solver(f, strides, arch, part_ratios, global_buf_idx, A, Z, compute_fact
     # output all constraints and variables
     m.write("debug.lp")
 
-    result_dict = {}
-    for variable in m.getVars():
-        logger.debug("Variable %s: Value %s" % (variable.varName, variable.x))
-        assert (variable.varName not in result_dict)
-        result_dict[variable.varName] = variable.x
-    logger.debug('Obj: %g' % m.objVal)
+    sol_count = m.SolCount
+    logger.info(f'\nFound {sol_count} solutions\n')
 
-    all_x = np.zeros((total_levels, perm_levels, 2))
-    for i in range(total_levels):
-        level_idx = 0
-        for j, f_j in enumerate(f):
-            for n, f_jn in enumerate(f_j):
-                for k in range(2):
-                    name = "X({},{},{},{})".format(i, j, n, k)
-                    val = result_dict[name]
-                    all_x[i, level_idx, k] = val
-                level_idx += 1
-    np.set_printoptions(precision=0, suppress=True)
+    last_objective = 1e-6
+    objectives = []
+    for i in range(sol_count):
+        m.setParam(GRB.Param.SolutionNumber, i)
+        assert m.PoolObjVal >= last_objective, f'{m.PoolObjVal} < {last_objective}'
+        # objectives.append(m.PoolObjVal)
+        # if i == sol_count - 1:
+        #     print(f'min={min(objectives)} max={max(objectives)}')
+        # if (m.PoolObjVal - last_objective) / last_objective < OBJECTIVE_INCREASE_THRESHOLD:
+        #     continue
+        # else:
+        #     increase = (m.PoolObjVal - last_objective) / last_objective
+        #     logger.info(f"{m.PoolObjVal}: {increase} increase")
+        #     last_objective = m.PoolObjVal
+        #     continue
 
-    var_outer_perm_config = [-1] * perm_levels
-    outer_perm_config = [-1] * perm_levels
-    x_arr = np.zeros((perm_levels, perm_levels, 2))
-    for i in range(gb_start_level, gb_start_level + perm_levels):
-        level_idx = 0
-        for j, f_j in enumerate(f):
-            for n, f_jn in enumerate(f_j):
-                for k in range(2):
-                    name = "X({},{},{},{})".format(i, j, n, k)
-                    val = result_dict[name]
-                    x_arr[i - gb_start_level, level_idx, k] = val
-                name = "X({},{},{},{})".format(i, j, n, 1)
-                val = result_dict[name]
-                if val == 1:
-                    var_outer_perm_config[i - gb_start_level] = j
-                level_idx += 1
-    logger.info(f'var_outer_perm_config: {var_outer_perm_config}')
+        result_dict = {}
+        for variable in m.getVars():
+            logger.debug("Variable %s: Value %s" % (variable.varName, variable.Xn))
+            assert (variable.varName not in result_dict)
+            result_dict[variable.varName] = variable.Xn
+        logger.debug('Obj: %g' % m.PoolObjVal) # EDITED
 
-    y_arr = np.zeros((num_vars, perm_levels))
-    for v in range(num_vars):
+        all_x = np.zeros((total_levels, perm_levels, 2))
+        for i in range(total_levels):
+            level_idx = 0
+            for j, f_j in enumerate(f):
+                for n, f_jn in enumerate(f_j):
+                    for k in range(2):
+                        name = "X({},{},{},{})".format(i, j, n, k)
+                        val = result_dict[name]
+                        all_x[i, level_idx, k] = val
+                    level_idx += 1
+        np.set_printoptions(precision=0, suppress=True)
+
+        var_outer_perm_config = [-1] * perm_levels
+        outer_perm_config = [-1] * perm_levels
+        x_arr = np.zeros((perm_levels, perm_levels, 2))
         for i in range(gb_start_level, gb_start_level + perm_levels):
-            row_sum = 0
-            val = result_dict["y({},{})".format(v, i)]
-            y_arr[v, i - gb_start_level] = val
-
-    # Merge the permutation, taking the first appearance of a prob to be the
-    merge_outer_perm_config = []
-    for i, var in enumerate(var_outer_perm_config):
-        if var != -1 and var not in merge_outer_perm_config:
-            merge_outer_perm_config.append(var)
-
-    for i in range(len(f)):
-        if i not in merge_outer_perm_config:
-            merge_outer_perm_config.append(i)
-
-    logger.info("var idx as the value {}".format(var_outer_perm_config))
-    logger.info("merged var idx as the value {}".format(merge_outer_perm_config))
-
-    outer_perm_config = [1] * len(f)
-    for i, var in enumerate(merge_outer_perm_config):
-        outer_perm_config[var] = i
-
-    logger.info("ordering idx as the value {}".format(outer_perm_config))
-
-    # init factor_config 
-    # DRAM is the last level
-    factor_config = []
-    spatial_config = []
-    dram_level = -1
-    for j, f_j in enumerate(f):
-        sub_factor_config = []
-        sub_spatial_config = []
-        for n, f_jn in enumerate(f_j):
-            sub_factor_config.append(dram_level)
-            sub_spatial_config.append(0)
-        factor_config.append(sub_factor_config)
-        spatial_config.append(sub_spatial_config)
-
-    for i in range(gb_start_level):
-        for j, f_j in enumerate(f):
-            for n, f_jn in enumerate(f_j):
-                if f[j][n] == 1:
-                    factor_config[j][n] = num_mems - 1
-                    spatial_config[j][n] = 0
-                    continue
-                for k in range(2):
-                    name = "X({},{},{},{})".format(i, j, n, k)
+            level_idx = 0
+            for j, f_j in enumerate(f):
+                for n, f_jn in enumerate(f_j):
+                    for k in range(2):
+                        name = "X({},{},{},{})".format(i, j, n, k)
+                        val = result_dict[name]
+                        x_arr[i - gb_start_level, level_idx, k] = val
+                    name = "X({},{},{},{})".format(i, j, n, 1)
                     val = result_dict[name]
-                    if val >= 0.9:
-                        factor_config[j][n] = i
-                        if k == 0:
-                            spatial_config[j][n] = 1
+                    if val == 1:
+                        var_outer_perm_config[i - gb_start_level] = j
+                    level_idx += 1
+        logger.info(f'var_outer_perm_config: {var_outer_perm_config}')
 
-    for i in range(gb_start_level + perm_levels, total_levels):
-        for j, f_j in enumerate(f):
-            for n, f_jn in enumerate(f_j):
-                if f[j][n] == 1:
-                    factor_config[j][n] = num_mems - 1
-                    spatial_config[j][n] = 0
-                    continue
-
-                for k in range(2):
-                    name = "X({},{},{},{})".format(i, j, n, k)
-                    val = result_dict[name]
-                    if val >= 0.9:
-                        if k == 0:
-                            raise ValueError('Invalid Mapping')
-                        factor_config[j][n] = i - perm_levels + 1
-
-    # set to -1 for not specified 
-    for j, f_j in enumerate(f):
-        for n, f_jn in enumerate(f_j):
+        y_arr = np.zeros((num_vars, perm_levels))
+        for v in range(num_vars):
             for i in range(gb_start_level, gb_start_level + perm_levels):
-                for k in range(2):
-                    name = "X({},{},{},{})".format(i, j, n, k)
-                    val = result_dict[name]
-                    if val >= 0.9:
-                        factor_config[j][n] = gb_start_level
-                        if k == 0:
-                            spatial_config[j][n] = 1
+                row_sum = 0
+                val = result_dict["y({},{})".format(v, i)]
+                y_arr[v, i - gb_start_level] = val
 
-    logger.info(f"prime factors: {f}")
-    logger.info(f"factor configs: {factor_config}")
-    logger.info(f"spatial configs: {spatial_config}")
-    logger.info(f"outer perm configs: {outer_perm_config}")
+        # Merge the permutation, taking the first appearance of a prob to be the
+        merge_outer_perm_config = []
+        for i, var in enumerate(var_outer_perm_config):
+            if var != -1 and var not in merge_outer_perm_config:
+                merge_outer_perm_config.append(var)
 
-    return (factor_config, spatial_config, outer_perm_config, milp_runtime)
+        for i in range(len(f)):
+            if i not in merge_outer_perm_config:
+                merge_outer_perm_config.append(i)
+
+        logger.info("var idx as the value {}".format(var_outer_perm_config))
+        logger.info("merged var idx as the value {}".format(merge_outer_perm_config))
+
+        outer_perm_config = [1] * len(f)
+        for i, var in enumerate(merge_outer_perm_config):
+            outer_perm_config[var] = i
+
+        logger.info("ordering idx as the value {}".format(outer_perm_config))
+
+        # init factor_config 
+        # DRAM is the last level
+        factor_config = []
+        spatial_config = []
+        dram_level = -1
+        for j, f_j in enumerate(f):
+            sub_factor_config = []
+            sub_spatial_config = []
+            for n, f_jn in enumerate(f_j):
+                sub_factor_config.append(dram_level)
+                sub_spatial_config.append(0)
+            factor_config.append(sub_factor_config)
+            spatial_config.append(sub_spatial_config)
+
+        for i in range(gb_start_level):
+            for j, f_j in enumerate(f):
+                for n, f_jn in enumerate(f_j):
+                    if f[j][n] == 1:
+                        factor_config[j][n] = num_mems - 1
+                        spatial_config[j][n] = 0
+                        continue
+                    for k in range(2):
+                        name = "X({},{},{},{})".format(i, j, n, k)
+                        val = result_dict[name]
+                        if val >= 0.9:
+                            factor_config[j][n] = i
+                            if k == 0:
+                                spatial_config[j][n] = 1
+
+        for i in range(gb_start_level + perm_levels, total_levels):
+            for j, f_j in enumerate(f):
+                for n, f_jn in enumerate(f_j):
+                    if f[j][n] == 1:
+                        factor_config[j][n] = num_mems - 1
+                        spatial_config[j][n] = 0
+                        continue
+
+                    for k in range(2):
+                        name = "X({},{},{},{})".format(i, j, n, k)
+                        val = result_dict[name]
+                        if val >= 0.9:
+                            if k == 0:
+                                raise ValueError('Invalid Mapping')
+                            factor_config[j][n] = i - perm_levels + 1
+
+        # set to -1 for not specified 
+        for j, f_j in enumerate(f):
+            for n, f_jn in enumerate(f_j):
+                for i in range(gb_start_level, gb_start_level + perm_levels):
+                    for k in range(2):
+                        name = "X({},{},{},{})".format(i, j, n, k)
+                        val = result_dict[name]
+                        if val >= 0.9:
+                            factor_config[j][n] = gb_start_level
+                            if k == 0:
+                                spatial_config[j][n] = 1
+
+        logger.info(f"prime factors: {f}")
+        logger.info(f"factor configs: {factor_config}")
+        logger.info(f"spatial configs: {spatial_config}")
+        logger.info(f"outer perm configs: {outer_perm_config}")
+
+        yield (factor_config, spatial_config, outer_perm_config, milp_runtime, m.PoolObjVal)
 
 
 def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
@@ -578,80 +599,102 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
         [0, 0.5, 0.5],
         [0.33, 0.33, 0.33],
     ]
-    factor_config, spatial_config, outer_perm_config, run_time = cosa(prob, arch, _A, B, part_ratios, global_buf_idx=4,
-                                                                      Z=Z)
-    # GOAL: save all feasible solutions we found in the MIP solver
-    # SolCount, how many solutions were found
-    # SolutionNumber starts indexing at 0. So we want to retrieve the values and yeah
-    # probably separate out the MIP code generates the outputs from the model solution, and rerun it for every suboptimal solution and save to a json
+    output = cosa(prob, arch, _A, B, part_ratios, global_buf_idx=4, Z=Z)
+    solution_number = 0
+    for factor_config, spatial_config, outer_perm_config, run_time, objective_value in output:
+        logger.info(f'Running Timeloop for Solution {solution_number}')
+        solution_number += 1
+        # logger.info(factor_config)
+        # GOAL: save all feasible solutions we found in the MIP solver
+        # SolCount, how many solutions were found
+        # SolutionNumber starts indexing at 0. So we want to retrieve the values and yeah
+        # probably separate out the MIP code generates the outputs from the model solution, and rerun it for every suboptimal solution and save to a json
+        # we can probably yield solutions or smth
 
 
-#     # Re-map all mem levels with spatial resources into new indices starting at arch.mem_levels
-#     # eg. levels 1, 3, 4 have spatial resources: 1 > 6, 3 > 7, 4 > 8
-#     # so we have eg. index 1 is the mem level(Temporal), then idx 6 is mem level(spatial)
-#     factor_config_backup = copy.deepcopy(factor_config)
-#     update_factor_config = factor_config
-#     spatial_to_factor_map = {}
-#     idx = arch.mem_levels
-#     for i, val in enumerate(arch.S):
-#         if val > 1:
-#             spatial_to_factor_map[i] = idx
-#             idx += 1
-#     logger.info(f'spatial_to_factor_map: {spatial_to_factor_map}')
+        # Re-map all mem levels with spatial resources into new indices starting at arch.mem_levels
+        # eg. levels 1, 3, 4 have spatial resources: 1 > 6, 3 > 7, 4 > 8
+        # so we have eg. index 1 is the mem level(Temporal), then idx 6 is mem level(spatial)
+        factor_config_backup = copy.deepcopy(factor_config)
+        update_factor_config = factor_config
+        spatial_to_factor_map = {}
+        idx = arch.mem_levels
+        for i, val in enumerate(arch.S):
+            if val > 1:
+                spatial_to_factor_map[i] = idx
+                idx += 1
+        logger.info(f'spatial_to_factor_map: {spatial_to_factor_map}')
 
-#     # Updated schedule using above mapping
-#     for j, f_j in enumerate(prob.prob_factors):
-#         for n, f_jn in enumerate(f_j):
-#             # if is mapped to spatial, look up the combined index
-#             if spatial_config[j][n] == 1:
-#                 idx = factor_config[j][n]
-#                 update_factor_config[j][n] = spatial_to_factor_map[idx]
+        # Updated schedule using above mapping
+        for j, f_j in enumerate(prob.prob_factors):
+            for n, f_jn in enumerate(f_j):
+                # if is mapped to spatial, look up the combined index
+                if spatial_config[j][n] == 1:
+                    idx = factor_config[j][n]
+                    update_factor_config[j][n] = spatial_to_factor_map[idx]
 
-#     logger.info(f'update_factor_config: {update_factor_config}')
-#     perm_config = mapspace.get_default_perm()
-#     perm_config[4] = outer_perm_config
+        logger.info(f'update_factor_config: {update_factor_config}')
+        perm_config = mapspace.get_default_perm()
+        perm_config[4] = outer_perm_config
 
-#     # status_dict = {}
-#     # ADDED
-#     # note: 
-#     # pe_energy is pJ(1e-12 Joules)
-#     # energy is
-#     status_dict = {
-#         'mem_instances': arch.mem_instances,
-#         'mem_entries': arch.mem_entries,
-#         'problem': prob.prob,
-#         'prime_factors': prob.prob_factors, # Prime factors
-#         'factor_config': factor_config_backup, # for each factor, what layer
-#         'spatial_config': spatial_config, # for each factor, temporal(0) or spatial(1)
-#         'outer_perm_config': outer_perm_config,
-#         # don't need updated factor config
-#         'prob_path': str(prob_path),
-#         'arch_path': str(arch_path),
-#         'mip_time': run_time,
-#     }
-#     try:
-#         spatial_configs = []
-#         logger.info('\n\n\nRunning config\n\n\n')
-#         results = run_config.run_config(mapspace, None, perm_config, update_factor_config, status_dict,
-#                                         run_gen_map=True, run_gen_tc=True, run_sim_test=True, output_path=output_path,
-#                                         spatial_configs=spatial_configs, valid_check=False, outer_loopcount_limit=100)
-#         logger.info(f'status_dict: {status_dict}')
-#     except Exception as e:
-#         logger.error(traceback.format_exc())
-#         logger.error('Error: invalid schedule.')
+        # status_dict = {}
+        # ADDED
+        # note: 
+        # pe_energy is pJ(1e-12 Joules)
+        # energy is
+        status_dict = {
+            'mem_instances': arch.mem_instances,
+            'mem_entries': arch.mem_entries,
+            'problem': prob.prob,
+            'prime_factors': prob.prob_factors, # Prime factors
+            'factor_config': factor_config_backup, # for each factor, what layer
+            'spatial_config': spatial_config, # for each factor, temporal(0) or spatial(1)
+            'outer_perm_config': outer_perm_config,
+            # don't need updated factor config
+            'prob_path': str(prob_path),
+            'arch_path': str(arch_path),
+            'solution_number': solution_number,
+            # 'mip_time': run_time,
+            'mip_objective': objective_value,
+        }
+        try:
+            spatial_configs = []
+            logger.info('\n\n\nRunning config\n\n\n')
+            results = run_config.run_config(mapspace, None, perm_config, update_factor_config, status_dict,
+                                            run_gen_map=True, run_gen_tc=True, run_sim_test=True, output_path=output_path,
+                                            spatial_configs=spatial_configs, valid_check=False, outer_loopcount_limit=100, additional_folder_name=str(solution_number))
+            logger.info(f'status_dict: {status_dict}')
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            logger.error('Error: invalid schedule.')
 
-#     return status_dict
+        # return status_dict
 
-# def run_cosa():
-#     parser = construct_argparser()
-#     args = parser.parse_args()
+def combine_jsons(root_path, output_json_path='output.json'):
+    lst = []
+    for root, dirs, files in os.walk(root_path):
+        for file in files:
+            if 'json' in file:
+                fpath = os.path.join(root, file)
+                with open(fpath, 'r') as f:
+                    lst.append(json.load(f))
+    
+    # Let the user manually delete the folder afterwards
+    with open(output_json_path, 'w') as file:
+        json.dump(lst, file, indent=4)
 
-#     prob_path = pathlib.Path(args.prob_path).resolve()
-#     arch_path = pathlib.Path(args.arch_path).resolve()
-#     mapspace_path = pathlib.Path(args.mapspace_path).resolve()
-#     output_path = args.output_dir
 
-#     run_timeloop(prob_path, arch_path, mapspace_path, output_path)
+def run_cosa():
+    parser = construct_argparser()
+    args = parser.parse_args()
+
+    prob_path = pathlib.Path(args.prob_path).resolve()
+    arch_path = pathlib.Path(args.arch_path).resolve()
+    mapspace_path = pathlib.Path(args.mapspace_path).resolve()
+    output_path = args.output_dir
+
+    run_timeloop(prob_path, arch_path, mapspace_path, output_path)
+    combine_jsons(output_path)
 
 
 if __name__ == "__main__":

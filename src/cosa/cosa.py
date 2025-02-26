@@ -98,11 +98,11 @@ def cosa(prob, arch, A, B, part_ratios, global_buf_idx, Z=None):
                 Z_var.append(rank_arr)
             Z.append(Z_var)
 
-    factor_config, spatial_config, outer_perm_config, run_time = mip_solver(prime_factors, strides, arch, part_ratios,
+    factor_config, spatial_config, outer_perm_config, run_time, model = mip_solver(prime_factors, strides, arch, part_ratios,
                                                                             global_buf_idx=4, A=_A, Z=Z,
                                                                             compute_factor=10, util_factor=-0.1,
                                                                             traffic_factor=1)
-    return factor_config, spatial_config, outer_perm_config, run_time
+    return factor_config, spatial_config, outer_perm_config, run_time, model
 
 
 def mip_solver(f, strides, arch, part_ratios, global_buf_idx, A, Z, compute_factor=10, util_factor=-1,
@@ -537,7 +537,7 @@ def mip_solver(f, strides, arch, part_ratios, global_buf_idx, A, Z, compute_fact
     logger.info(f"spatial configs: {spatial_config}")
     logger.info(f"outer perm configs: {outer_perm_config}")
 
-    return (factor_config, spatial_config, outer_perm_config, milp_runtime)
+    return (factor_config, spatial_config, outer_perm_config, milp_runtime, m)
 
 
 def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
@@ -567,7 +567,7 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
         [0, 0.5, 0.5],
         [0.33, 0.33, 0.33],
     ]
-    factor_config, spatial_config, outer_perm_config, run_time = cosa(prob, arch, _A, B, part_ratios, global_buf_idx=4,
+    factor_config, spatial_config, outer_perm_config, run_time, model = cosa(prob, arch, _A, B, part_ratios, global_buf_idx=4,
                                                                       Z=Z)
 
     # Re-map all mem levels with spatial resources into new indices starting at arch.mem_levels
@@ -612,6 +612,9 @@ def run_timeloop(prob_path, arch_path, mapspace_path, output_path):
         'prob_path': str(prob_path),
         'arch_path': str(arch_path),
         'mip_time': run_time,
+        'mip_work_units': model.Work,
+        'mip_simplex_iters': model.IterCount,
+        'mip_node_count': model.NodeCount,
     }
     try:
         spatial_configs = []
