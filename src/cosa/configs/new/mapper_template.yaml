@@ -1,0 +1,6 @@
+mapper:
+  algorithm: hybrid
+  optimization_metrics:
+  - edp
+  timeout: 1000000
+  search_size: 10

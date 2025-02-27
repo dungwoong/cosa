@@ -14,6 +14,9 @@
 - Seems like there's a lot of feasible solutions with the same objective value being found by the QP solver. Some of these have the same factor/spatial config, etc.
 - Maybe we can conclude that this symmetry or whatever can cause a bottleneck in the solver, and then we can move onto trying to get timeloop_hybrid mappings instead of cosa mappings
 
+# Timeloop
+- `timeloop-mapper cosa/configs/new/sample_mapper.yaml`
+- [mapper config](https://timeloop.csail.mit.edu/v4/input-formats/mapper)
 
 # Experiments
 - Plot existing stuff to look at MIP solver
